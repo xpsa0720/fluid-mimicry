@@ -176,10 +176,10 @@ class App {
 
                 float L = texelFetch(u_velocityTexture, coord + ivec2(-1, 0),0).x;
                 float R = texelFetch(u_velocityTexture, coord + ivec2(1, 0),0).x;
-                float T = texelFetch(u_velocityTexture, coord + ivec2(0, -1),0).y;
-                float B = texelFetch(u_velocityTexture, coord + ivec2(0, 1),0).y;
+                float T = texelFetch(u_velocityTexture, coord + ivec2(0, 1),0).y;
+                float B = texelFetch(u_velocityTexture, coord + ivec2(0, -1),0).y;
 
-                float divergence = 0.5 * ((R - L) + (T - B));
+                float divergence = 1. * ((R - L) + (T - B));
 
                 outDivergence = vec4(divergence, 0, 0, 1);
             }
@@ -215,8 +215,8 @@ class App {
 
                 float L = texelFetch(u_pressureTexture, coord + ivec2(-1, 0),0).x;
                 float R = texelFetch(u_pressureTexture, coord + ivec2(1, 0),0).x;
-                float T = texelFetch(u_pressureTexture, coord + ivec2(0, -1),0).y;
-                float B = texelFetch(u_pressureTexture, coord + ivec2(0, 1),0).y;
+                float T = texelFetch(u_pressureTexture, coord + ivec2(0, -1),0).x;
+                float B = texelFetch(u_pressureTexture, coord + ivec2(0, 1),0).x;
 
                 float pressure = (L + R + T + B - divergence) * 0.25;
 
@@ -241,8 +241,8 @@ class App {
 
                 ivec2 Lc = clamp(coord + ivec2(-1, 0), ivec2(0), size - ivec2(1));
                 ivec2 Rc = clamp(coord + ivec2(1, 0), ivec2(0), size - ivec2(1));
-                ivec2 Tc = clamp(coord + ivec2(0, -1), ivec2(0), size - ivec2(1));
-                ivec2 Bc = clamp(coord + ivec2(0, 1), ivec2(0), size - ivec2(1));
+                ivec2 Tc = clamp(coord + ivec2(0, 1), ivec2(0), size - ivec2(1));
+                ivec2 Bc = clamp(coord + ivec2(0, -1), ivec2(0), size - ivec2(1));
 
                 float L = texelFetch(u_pressureTexture, Lc,0).x;
                 float R = texelFetch(u_pressureTexture, Rc,0).x;
@@ -300,7 +300,7 @@ class App {
                 vec2 prevCoord = coord - currentVelocity * u_dt;
 
                 vec3 velocity = texture(u_velocityTexture, prevCoord).rgb;
-
+                velocity *=0.999;
                 outVelocity = vec4(velocity, 1.);
             }
             `;
@@ -370,54 +370,50 @@ class App {
 
         this.velocityAdvectionPass.pass(
             [{ key: "float", name: "u_dt", value: dt }],
-            this.writeBuffer,
             this.readBuffer,
+            this.writeBuffer,
             this.textureWidth,
             this.textureHeight,
         );
 
         this.divergencePass.pass(
             [],
-            this.writeBuffer,
             this.readBuffer,
+            this.writeBuffer,
             this.textureWidth,
             this.textureHeight,
         );
 
         this.pressureInitPass.pass(
             [],
-            this.writeBuffer,
             this.readBuffer,
+            this.writeBuffer,
             this.textureWidth,
             this.textureHeight,
         );
 
-        for (let i = 0; i < 14; i++) {
+        for (let i = 0; i < 50; i++) {
             this.pressurePass.pass(
                 [],
-                this.writeBuffer,
                 this.readBuffer,
+                this.writeBuffer,
                 this.textureWidth,
                 this.textureHeight,
             );
-            [this.readBuffer, this.writeBuffer] = [
-                this.writeBuffer,
-                this.readBuffer,
-            ];
         }
 
         this.gradientSubtractPass.pass(
             [],
-            this.writeBuffer,
             this.readBuffer,
+            this.writeBuffer,
             this.textureWidth,
             this.textureHeight,
         );
 
         this.dyeAdvectionPass.pass(
             [{ key: "float", name: "u_dt", value: dt }],
-            this.writeBuffer,
             this.readBuffer,
+            this.writeBuffer,
             this.textureWidth,
             this.textureHeight,
         );
@@ -448,6 +444,8 @@ class App {
         this.relationTexture = {
             u_dyeTexture: gl.COLOR_ATTACHMENT0,
             u_velocityTexture: gl.COLOR_ATTACHMENT1,
+            u_divergenceTexture: gl.COLOR_ATTACHMENT2,
+            u_pressureTexture: gl.COLOR_ATTACHMENT3,
         };
 
         const resolution = {
@@ -466,8 +464,6 @@ class App {
             this.vertexShader(),
             this.initShaderSource(),
             this.relationTexture,
-            [],
-            [],
         );
 
         this.velocityAdvectionPass = new ShaderPass(
@@ -478,6 +474,7 @@ class App {
             this.velocityAdvectionShaderSource(),
             this.relationTexture,
             [{ key: "float", name: "u_dt", value: 0 }, resolution],
+            ["u_velocityTexture"],
             ["u_velocityTexture"],
         );
 
@@ -490,6 +487,7 @@ class App {
             this.relationTexture,
             [{ key: "float", name: "u_dt", value: 0 }, resolution],
             ["u_dyeTexture", "u_velocityTexture"],
+            ["u_dyeTexture"],
         );
 
         this.divergencePass = new ShaderPass(
@@ -501,6 +499,7 @@ class App {
             this.relationTexture,
             [resolution],
             ["u_velocityTexture"],
+            ["u_divergenceTexture"],
         );
 
         this.pressureInitPass = new ShaderPass(
@@ -510,6 +509,7 @@ class App {
             this.vertexShader(),
             this.pressureInitShaderSource(),
             this.relationTexture,
+            [],
             [],
             [],
         );
@@ -523,6 +523,7 @@ class App {
             this.relationTexture,
             [resolution],
             ["u_pressureTexture", "u_divergenceTexture"],
+            ["u_pressureTexture"],
         );
 
         this.gradientSubtractPass = new ShaderPass(
@@ -533,6 +534,7 @@ class App {
             this.gradientSubtractShaderSource(),
             this.relationTexture,
             [resolution],
+            ["u_velocityTexture", "u_pressureTexture"],
             ["u_velocityTexture", "u_pressureTexture"],
         );
 
@@ -559,6 +561,7 @@ class App {
                     value: [this.mouseDelta.x * 10, this.mouseDelta.y * 10],
                 },
             ],
+            ["u_dyeTexture", "u_velocityTexture"],
             ["u_dyeTexture", "u_velocityTexture"],
         );
         this.velocityDisplayPass = new ShaderPass(

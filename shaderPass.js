@@ -10,13 +10,15 @@ export class ShaderPass {
         relationTexture,
         uniformCandidate = [],
         textureCandidate = [],
+        outTexture = [],
     ) {
         /** @type {WebGL2RenderingContext} */
         this.gl = gl;
         this.quadVao = quadVao;
         this.isCanvasOutput = isCanvasOutput ?? false;
         this.relationTexture = relationTexture;
-
+        this.textureCandidate = textureCandidate;
+        this.outTexture = outTexture;
         this.outputLocations =
             this.parseFragmentOutputLocations(fragmentShaderSource);
 
@@ -138,10 +140,43 @@ export class ShaderPass {
         );
     }
 
+    swapTexture(readBuffer, writeBuffer) {
+        const gl = this.gl;
+
+        this.outTexture.forEach((e, i) => {
+            const readTexture = readBuffer.texture[e];
+            const writeTexture = writeBuffer.texture[e];
+            const COLOR_ATTACHMENT = this.relationTexture[e];
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, readBuffer.frameBuffer);
+            gl.framebufferTexture2D(
+                gl.FRAMEBUFFER,
+                COLOR_ATTACHMENT,
+                gl.TEXTURE_2D,
+                writeTexture,
+                0,
+            );
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, writeBuffer.frameBuffer);
+            gl.framebufferTexture2D(
+                gl.FRAMEBUFFER,
+                COLOR_ATTACHMENT,
+                gl.TEXTURE_2D,
+                readTexture,
+                0,
+            );
+
+            [readBuffer.texture[e], writeBuffer.texture[e]] = [
+                writeBuffer.texture[e],
+                readBuffer.texture[e],
+            ];
+        });
+    }
+
     pass(
         updateUniformDatas,
-        frameBuffer_A,
-        frameBuffer_B,
+        readBuffer,
+        writeBuffer,
         textureWidth,
         textureHeight,
     ) {
@@ -151,17 +186,20 @@ export class ShaderPass {
 
         gl.viewport(0, 0, textureWidth, textureHeight);
 
-        this.bindFrameBuffer(frameBuffer_B);
+        this.bindFrameBuffer(writeBuffer);
 
         this.updateUniform(updateUniformDatas ?? []);
         this.uniformManager.deliver();
 
-        this.bindTexture(frameBuffer_A);
+        this.bindTexture(readBuffer);
 
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         gl.bindVertexArray(this.quadVao);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        if (readBuffer && writeBuffer && this.outTexture)
+            this.swapTexture(readBuffer, writeBuffer);
     }
 }
