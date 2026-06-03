@@ -277,7 +277,7 @@ class App {
                 vec2 prevCoord = coord - currentVelocity * u_dt;
 
                 vec3 dye = texture(u_dyeTexture, prevCoord).rgb;
-
+                dye -= 0.0018;
                 outDye = vec4(dye, 1.);
             }
             `;
