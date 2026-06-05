@@ -108,6 +108,7 @@ export class ShaderPass {
 
     updateUniform(updateUniformDatas) {
         updateUniformDatas.map((e, i) => {
+            // console.log(e);
             this.uniformManager.editUniformValue(e.key, e.name, e.value);
         });
     }
@@ -126,12 +127,15 @@ export class ShaderPass {
         gl.drawBuffers(this.colorList);
     }
 
-    bindTexture(frameBuffer) {
+    bindTexture(frameBuffer, readFrameBuffer) {
         const gl = this.gl;
-
+        let c = 0;
         Object.keys(this.uniformManager.textureLocationList).forEach(
             (key, i) => {
-                const t = frameBuffer.texture[key];
+                let t = frameBuffer.texture[key];
+                if (!t) {
+                    t = readFrameBuffer.texture[key];
+                }
                 const textureLoc = this.uniformManager.textureLocationList[key];
                 gl.activeTexture(gl.TEXTURE0 + i);
                 gl.bindTexture(gl.TEXTURE_2D, t);
@@ -179,6 +183,7 @@ export class ShaderPass {
         writeBuffer,
         textureWidth,
         textureHeight,
+        readFrameBuffer,
     ) {
         const gl = this.gl;
 
@@ -191,7 +196,7 @@ export class ShaderPass {
         this.updateUniform(updateUniformDatas ?? []);
         this.uniformManager.deliver();
 
-        this.bindTexture(readBuffer);
+        this.bindTexture(readBuffer, readFrameBuffer);
 
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);

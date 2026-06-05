@@ -4,6 +4,9 @@ import { Uniform } from "./uniform.js";
 import { UniformManager } from "./uniformManager.js";
 import { uniformSchema } from "./uniformSchema.js";
 
+const DYERES = 2048;
+const SIMRES = 128;
+
 class App {
     constructor() {
         this.canvas = document.createElement("canvas");
@@ -61,11 +64,11 @@ class App {
         this.canvas.style.width = `${this.stageWidth}px`;
         this.canvas.style.height = `${this.stageHeight}px`;
 
-        if (this.readBuffer || this.writeBuffer) {
-            this.readBuffer = this.createFramebuffer();
-            this.writeBuffer = this.createFramebuffer();
-            this.initTexture();
-        }
+        // if (this.readBuffer || this.writeBuffer) {
+        //     this.readBuffer = this.createFramebuffer();
+        //     this.writeBuffer = this.createFramebuffer();
+        //     this.initTexture();
+        // }
     }
 
     vertexShader() {
@@ -78,17 +81,27 @@ class App {
         `;
     }
 
-    initShaderSource() {
+    initDyeShaderSource() {
         return /*glsl*/ `#version 300 es
             precision highp float;
 
             layout(location=0) out vec4 outDye;
-            layout(location=1) out vec4 outVelocity;
-            layout(location=2) out vec4 outDivergence;
-            layout(location=3) out vec4 outPressure;
 
             void main() {
                 outDye = vec4(0,0,0,1);
+                return;
+            }
+            `;
+    }
+    initSimShaderSource() {
+        return /*glsl*/ `#version 300 es
+            precision highp float;
+
+            layout(location=0) out vec4 outVelocity;
+            layout(location=1) out vec4 outDivergence;
+            layout(location=2) out vec4 outPressure;
+
+            void main() {
                 outVelocity = vec4(0.,0.,0,1);
                 outDivergence = vec4(0.,0.,0,1);
                 outPressure = vec4(0.,0.,0,1);
@@ -96,51 +109,79 @@ class App {
             }
             `;
     }
-
-    splatShaderSource() {
+    dyeSplatShaderSource() {
         return /*glsl*/ `#version 300 es
             precision highp float;
 
             uniform vec2 u_resolution;
             uniform sampler2D u_dyeTexture;
-            uniform sampler2D u_velocityTexture;
 
             uniform float u_penSize;
             uniform bool u_isClick;
             uniform vec2 u_mouse;
             uniform vec3 u_color;
 
-            uniform vec2 u_mouseVelocity;
 
             layout(location=0) out vec4 outDye;
-            layout(location=1) out vec4 outVelocity;
 
             void main() {
                 vec2 coord = gl_FragCoord.xy / u_resolution.xy;
-                ivec2 texelCoord = ivec2(gl_FragCoord.xy);
-                ivec2 texelMouse = ivec2(u_mouse.xy * u_resolution.xy);
-                
-                float radius = u_penSize * 0.5;
-                float penVecDistance = distance(vec2(texelCoord), vec2(texelMouse));
-                bool isInterectionCoord = u_isClick && penVecDistance < radius;
 
-                float d = distance(vec2(texelCoord), vec2(texelMouse));
+                vec2 diff = coord - u_mouse.xy;
+                diff.x *= u_resolution.x / u_resolution.y;
+                float radius = u_penSize * 0.5;
+                float d = length(diff);
                 float influence = exp(-(d * d) / (radius * radius));
-                vec2 velocity = texelFetch(u_velocityTexture, texelCoord, 0).xy;
                 vec3 dye = texture(u_dyeTexture, coord).rgb;
 
                 if(u_isClick){
-                    velocity += u_mouseVelocity * influence;
                     dye += u_color * influence;
                 }
 
                 outDye = vec4(dye,1);
+
+                return;    
+            }
+            `;
+    }
+
+    velocitySplatShaderSource() {
+        return /*glsl*/ `#version 300 es
+            precision highp float;
+
+            uniform vec2 u_resolution;
+            uniform sampler2D u_velocityTexture;
+
+            uniform float u_penSize;
+            uniform bool u_isClick;
+            uniform vec2 u_mouse;
+
+            uniform vec2 u_mouseVelocity;
+
+            layout(location=0) out vec4 outVelocity;
+
+            void main() {
+                vec2 coord = gl_FragCoord.xy / u_resolution.xy;
+                
+                vec2 diff = coord - u_mouse.xy;
+                diff.x *= u_resolution.x / u_resolution.y;
+                float radius = u_penSize * 0.5;
+                float d = length(diff);
+                float influence = exp(-(d * d) / (radius * radius));
+
+                vec2 velocity = texture(u_velocityTexture, coord).xy;
+
+                if(u_isClick){
+                    velocity += u_mouseVelocity * influence;
+                }
+
                 outVelocity = vec4(velocity,0,0);
 
                 return;    
             }
             `;
     }
+
     velocityDisplayShaderSource() {
         return /*glsl*/ `#version 300 es
         precision highp float;
@@ -169,7 +210,7 @@ class App {
             uniform vec2 u_resolution;
             uniform sampler2D u_velocityTexture;
 
-            layout(location=2) out vec4 outDivergence;
+            layout(location=1) out vec4 outDivergence;
 
             void main() {
                 ivec2 coord = ivec2(gl_FragCoord.xy);
@@ -179,7 +220,7 @@ class App {
                 float T = texelFetch(u_velocityTexture, coord + ivec2(0, 1),0).y;
                 float B = texelFetch(u_velocityTexture, coord + ivec2(0, -1),0).y;
 
-                float divergence = 1. * ((R - L) + (T - B));
+                float divergence = 0.5 * ((R - L) + (T - B));
 
                 outDivergence = vec4(divergence, 0, 0, 1);
             }
@@ -190,10 +231,16 @@ class App {
         return /*glsl*/ `#version 300 es
             precision highp float;
 
-            layout(location=3) out vec4 outPressure;
+            uniform vec2 u_resolution;
+
+            uniform sampler2D u_pressureTexture;
+
+            layout(location=2) out vec4 outPressure;
 
             void main() {
-                outPressure = vec4(0, 0, 0, 1);
+                vec2 coord = gl_FragCoord.xy / u_resolution.xy;
+                float pressure = texture(u_pressureTexture, coord).r * 0.8;
+                outPressure = vec4(pressure, 0, 0, 1);
             }
             `;
     }
@@ -206,7 +253,7 @@ class App {
             uniform sampler2D u_pressureTexture;
             uniform sampler2D u_divergenceTexture;
 
-            layout(location=3) out vec4 outPressure;
+            layout(location=2) out vec4 outPressure;
 
             void main() {
                 ivec2 coord = ivec2(gl_FragCoord.xy);
@@ -233,23 +280,24 @@ class App {
             uniform sampler2D u_velocityTexture;
             uniform sampler2D u_pressureTexture;
 
-            layout(location=1) out vec4 outVelocity;
+            layout(location=0) out vec4 outVelocity;
 
             void main() {
-                ivec2 coord = ivec2(gl_FragCoord.xy);
+                ivec2 texelCoord = ivec2(gl_FragCoord.xy);
+                vec2 coord = gl_FragCoord.xy / u_resolution.xy;
                 ivec2 size = textureSize(u_pressureTexture, 0);
 
-                ivec2 Lc = clamp(coord + ivec2(-1, 0), ivec2(0), size - ivec2(1));
-                ivec2 Rc = clamp(coord + ivec2(1, 0), ivec2(0), size - ivec2(1));
-                ivec2 Tc = clamp(coord + ivec2(0, 1), ivec2(0), size - ivec2(1));
-                ivec2 Bc = clamp(coord + ivec2(0, -1), ivec2(0), size - ivec2(1));
+                ivec2 Lc = clamp(texelCoord + ivec2(-1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Rc = clamp(texelCoord + ivec2(1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Tc = clamp(texelCoord + ivec2(0, 1), ivec2(0), size - ivec2(1));
+                ivec2 Bc = clamp(texelCoord + ivec2(0, -1), ivec2(0), size - ivec2(1));
 
                 float L = texelFetch(u_pressureTexture, Lc,0).x;
                 float R = texelFetch(u_pressureTexture, Rc,0).x;
                 float T = texelFetch(u_pressureTexture, Tc,0).x;
                 float B = texelFetch(u_pressureTexture, Bc,0).x;
 
-                vec2 velocity = texelFetch(u_velocityTexture, coord, 0).xy;
+                vec2 velocity = texture(u_velocityTexture, coord).xy;
 
                 vec2 gradient = vec2(R-L,T-B)*0.5;
 
@@ -277,7 +325,8 @@ class App {
                 vec2 prevCoord = coord - currentVelocity * u_dt;
 
                 vec3 dye = texture(u_dyeTexture, prevCoord).rgb;
-                dye -= 0.0018;
+
+                // dye -= 0.0018;
                 outDye = vec4(dye, 1.);
             }
             `;
@@ -291,7 +340,7 @@ class App {
             uniform sampler2D u_dyeTexture;
             uniform float u_dt;
 
-            layout(location=1) out vec4 outVelocity;
+            layout(location=0) out vec4 outVelocity;
 
             void main() {
                 vec2 coord = gl_FragCoord.xy / u_resolution.xy;
@@ -300,8 +349,8 @@ class App {
                 vec2 prevCoord = coord - currentVelocity * u_dt;
 
                 vec3 velocity = texture(u_velocityTexture, prevCoord).rgb;
-                velocity *=0.999;
-                outVelocity = vec4(velocity, 1.);
+                velocity *=0.96;
+                outVelocity = vec4(velocity, 0.);
             }
             `;
     }
@@ -317,9 +366,9 @@ class App {
 
             void main() {
                 vec2 coord = gl_FragCoord.xy / u_resolution.xy;
+                // coord.y *= u_resolution.y / u_resolution.x;
                 vec3 dye = texture(u_dyeTexture, coord).rgb;
 
-                
                 outColor = vec4(dye,1);
             }
             `;
@@ -333,7 +382,8 @@ class App {
         const g = Math.random() * (max - min) + min;
         const b = Math.random() * (max - min) + min;
 
-        return [r, g, b];
+        // return [r, g, b];
+        return [0.07, 0.07, 0.07];
     }
 
     animate() {
@@ -347,7 +397,7 @@ class App {
         const dt = Math.min((currentTime - this.prevTime) / 1000, 1 / 30);
         this.prevTime = currentTime;
 
-        this.splatPass.pass(
+        this.dyeSplatPass.pass(
             [
                 { key: "bool", name: "u_isClick", value: this.isClick },
                 {
@@ -356,71 +406,87 @@ class App {
                     value: [this.pointerCoord.x, this.pointerCoord.y],
                 },
                 { key: "vec3", name: "u_color", value: [r, g, b] },
+            ],
+            this.dyeReadBuffer,
+            this.dyeWriteBuffer,
+            this.dyeTextureWidth,
+            this.dyeTextureHeight,
+        );
+
+        this.velocitySplatPass.pass(
+            [
+                { key: "bool", name: "u_isClick", value: this.isClick },
+                {
+                    key: "vec2",
+                    name: "u_mouse",
+                    value: [this.pointerCoord.x, this.pointerCoord.y],
+                },
                 {
                     key: "vec2",
                     name: "u_mouseVelocity",
-                    value: [this.mouseDelta.x * 10, this.mouseDelta.y * 10],
+                    value: [this.mouseDelta.x * 90, this.mouseDelta.y * 90],
                 },
             ],
-            this.readBuffer,
-            this.writeBuffer,
-            this.textureWidth,
-            this.textureHeight,
+            this.simReadBuffer,
+            this.simWriteBuffer,
+            this.simTextureWidth,
+            this.simTextureHeight,
         );
 
         this.velocityAdvectionPass.pass(
             [{ key: "float", name: "u_dt", value: dt }],
-            this.readBuffer,
-            this.writeBuffer,
-            this.textureWidth,
-            this.textureHeight,
+            this.simReadBuffer,
+            this.simWriteBuffer,
+            this.simTextureWidth,
+            this.simTextureHeight,
         );
 
         this.divergencePass.pass(
             [],
-            this.readBuffer,
-            this.writeBuffer,
-            this.textureWidth,
-            this.textureHeight,
+            this.simReadBuffer,
+            this.simWriteBuffer,
+            this.simTextureWidth,
+            this.simTextureHeight,
         );
 
         this.pressureInitPass.pass(
             [],
-            this.readBuffer,
-            this.writeBuffer,
-            this.textureWidth,
-            this.textureHeight,
+            this.simReadBuffer,
+            this.simWriteBuffer,
+            this.simTextureWidth,
+            this.simTextureHeight,
         );
 
-        for (let i = 0; i < 50; i++) {
+        for (let i = 0; i < 20; i++) {
             this.pressurePass.pass(
                 [],
-                this.readBuffer,
-                this.writeBuffer,
-                this.textureWidth,
-                this.textureHeight,
+                this.simReadBuffer,
+                this.simWriteBuffer,
+                this.simTextureWidth,
+                this.simTextureHeight,
             );
         }
 
         this.gradientSubtractPass.pass(
             [],
-            this.readBuffer,
-            this.writeBuffer,
-            this.textureWidth,
-            this.textureHeight,
+            this.simReadBuffer,
+            this.simWriteBuffer,
+            this.simTextureWidth,
+            this.simTextureHeight,
         );
 
         this.dyeAdvectionPass.pass(
             [{ key: "float", name: "u_dt", value: dt }],
-            this.readBuffer,
-            this.writeBuffer,
-            this.textureWidth,
-            this.textureHeight,
+            this.dyeReadBuffer,
+            this.dyeWriteBuffer,
+            this.dyeTextureWidth,
+            this.dyeTextureHeight,
+            this.simReadBuffer,
         );
 
         this.displayPass.pass(
             [],
-            this.readBuffer,
+            this.dyeReadBuffer,
             null,
             this.canvas.width,
             this.canvas.height,
@@ -435,35 +501,61 @@ class App {
     initWebgl() {
         const gl = this.gl;
         const vs = gl.createShader(gl.VERTEX_SHADER);
-        this.penSize = 200;
-        this.cellRatio = 1;
-        this.textureWidth = this.canvas.width / this.cellRatio;
-        this.textureHeight = this.canvas.height / this.cellRatio;
+        this.penSize = 0.1;
+        this.simTextureWidth = SIMRES;
+        this.simTextureHeight = Math.floor(
+            SIMRES * (this.canvas.height / this.canvas.width),
+        );
+        this.dyeTextureWidth = DYERES;
+        this.dyeTextureHeight = Math.floor(
+            DYERES * (this.canvas.height / this.canvas.width),
+        );
         this.prevTime = null;
         this.quadVao = this.createQuadVAO();
-        this.relationTexture = {
+
+        this.relationDyeTexture = {
             u_dyeTexture: gl.COLOR_ATTACHMENT0,
-            u_velocityTexture: gl.COLOR_ATTACHMENT1,
-            u_divergenceTexture: gl.COLOR_ATTACHMENT2,
-            u_pressureTexture: gl.COLOR_ATTACHMENT3,
+        };
+
+        this.relationSimTexture = {
+            u_velocityTexture: gl.COLOR_ATTACHMENT0,
+            u_divergenceTexture: gl.COLOR_ATTACHMENT1,
+            u_pressureTexture: gl.COLOR_ATTACHMENT2,
         };
 
         const resolution = {
             key: "vec2",
             name: "u_resolution",
-            value: [this.textureWidth, this.textureHeight],
+            value: [this.simTextureWidth, this.simTextureHeight],
         };
 
+        const dyeResolution = {
+            key: "vec2",
+            name: "u_resolution",
+            value: [this.dyeTextureWidth, this.dyeTextureHeight], // 1024!
+        };
         gl.getExtension("EXT_color_buffer_float");
         gl.getExtension("OES_texture_float_linear");
 
-        this.initPass = new ShaderPass(
+        this.initDyePass = new ShaderPass(
             gl,
             this.quadVao,
             false,
             this.vertexShader(),
-            this.initShaderSource(),
-            this.relationTexture,
+            this.initDyeShaderSource(),
+            this.relationDyeTexture,
+            [],
+            [],
+            ["u_dyeTexture"],
+        );
+
+        this.initSimPass = new ShaderPass(
+            gl,
+            this.quadVao,
+            false,
+            this.vertexShader(),
+            this.initSimShaderSource(),
+            this.relationSimTexture,
         );
 
         this.velocityAdvectionPass = new ShaderPass(
@@ -472,7 +564,7 @@ class App {
             false,
             this.vertexShader(),
             this.velocityAdvectionShaderSource(),
-            this.relationTexture,
+            this.relationSimTexture,
             [{ key: "float", name: "u_dt", value: 0 }, resolution],
             ["u_velocityTexture"],
             ["u_velocityTexture"],
@@ -484,8 +576,8 @@ class App {
             false,
             this.vertexShader(),
             this.dyeAdvectionShaderSource(),
-            this.relationTexture,
-            [{ key: "float", name: "u_dt", value: 0 }, resolution],
+            this.relationDyeTexture,
+            [{ key: "float", name: "u_dt", value: 0 }, dyeResolution],
             ["u_dyeTexture", "u_velocityTexture"],
             ["u_dyeTexture"],
         );
@@ -496,7 +588,7 @@ class App {
             false,
             this.vertexShader(),
             this.divergenceShaderSource(),
-            this.relationTexture,
+            this.relationSimTexture,
             [resolution],
             ["u_velocityTexture"],
             ["u_divergenceTexture"],
@@ -508,10 +600,10 @@ class App {
             false,
             this.vertexShader(),
             this.pressureInitShaderSource(),
-            this.relationTexture,
-            [],
-            [],
-            [],
+            this.relationSimTexture,
+            [resolution],
+            ["u_pressureTexture"],
+            ["u_pressureTexture"],
         );
 
         this.pressurePass = new ShaderPass(
@@ -520,7 +612,7 @@ class App {
             false,
             this.vertexShader(),
             this.pressureShaderSource(),
-            this.relationTexture,
+            this.relationSimTexture,
             [resolution],
             ["u_pressureTexture", "u_divergenceTexture"],
             ["u_pressureTexture"],
@@ -532,19 +624,41 @@ class App {
             false,
             this.vertexShader(),
             this.gradientSubtractShaderSource(),
-            this.relationTexture,
+            this.relationSimTexture,
             [resolution],
             ["u_velocityTexture", "u_pressureTexture"],
             ["u_velocityTexture", "u_pressureTexture"],
         );
 
-        this.splatPass = new ShaderPass(
+        this.dyeSplatPass = new ShaderPass(
             gl,
             this.quadVao,
             false,
             this.vertexShader(),
-            this.splatShaderSource(),
-            this.relationTexture,
+            this.dyeSplatShaderSource(),
+            this.relationDyeTexture,
+            [
+                dyeResolution,
+                { key: "float", name: "u_penSize", value: this.penSize },
+                { key: "bool", name: "u_isClick", value: this.isClick },
+                {
+                    key: "vec2",
+                    name: "u_mouse",
+                    value: [this.pointerCoord.x, this.pointerCoord.y],
+                },
+                { key: "vec3", name: "u_color", value: [0, 0, 0] },
+            ],
+            ["u_dyeTexture"],
+            ["u_dyeTexture"],
+        );
+
+        this.velocitySplatPass = new ShaderPass(
+            gl,
+            this.quadVao,
+            false,
+            this.vertexShader(),
+            this.velocitySplatShaderSource(),
+            this.relationSimTexture,
             [
                 resolution,
                 { key: "float", name: "u_penSize", value: this.penSize },
@@ -554,52 +668,54 @@ class App {
                     name: "u_mouse",
                     value: [this.pointerCoord.x, this.pointerCoord.y],
                 },
-                { key: "vec3", name: "u_color", value: [0, 0, 0] },
                 {
                     key: "vec2",
                     name: "u_mouseVelocity",
                     value: [this.mouseDelta.x * 10, this.mouseDelta.y * 10],
                 },
             ],
-            ["u_dyeTexture", "u_velocityTexture"],
-            ["u_dyeTexture", "u_velocityTexture"],
-        );
-        this.velocityDisplayPass = new ShaderPass(
-            gl,
-            this.quadVao,
-            true,
-            this.vertexShader(),
-            this.velocityDisplayShaderSource(),
-            this.relationTexture,
-            [resolution],
+            ["u_velocityTexture"],
             ["u_velocityTexture"],
         );
+
         this.displayPass = new ShaderPass(
             gl,
             this.quadVao,
             true,
             this.vertexShader(),
             this.displayShaderSource(),
-            this.relationTexture,
-            [resolution],
+            this.relationDyeTexture,
+            [
+                {
+                    key: "vec2",
+                    name: "u_resolution",
+                    value: [this.canvas.width, this.canvas.height],
+                },
+            ],
             ["u_dyeTexture"],
         );
 
-        this.readBuffer = this.createFramebuffer();
-        this.writeBuffer = this.createFramebuffer();
+        this.simReadBuffer = this.createSimulationFrameBuffer();
+        this.simWriteBuffer = this.createSimulationFrameBuffer();
 
-        this.initPass.pass(
+        this.dyeReadBuffer = this.createDyeFrameBuffer();
+        this.dyeWriteBuffer = this.createDyeFrameBuffer();
+
+        this.initDyePass.pass(
             [],
-            this.readBuffer,
-            this.writeBuffer,
-            this.textureWidth,
-            this.textureHeight,
+            this.dyeReadBuffer,
+            this.dyeWriteBuffer,
+            this.dyeTextureWidth,
+            this.dyeTextureHeight,
         );
 
-        [this.readBuffer, this.writeBuffer] = [
-            this.writeBuffer,
-            this.readBuffer,
-        ];
+        this.initSimPass.pass(
+            [],
+            this.simReadBuffer,
+            this.simWriteBuffer,
+            this.simTextureWidth,
+            this.simTextureHeight,
+        );
 
         this.animate();
     }
@@ -620,8 +736,8 @@ class App {
             gl.TEXTURE_2D,
             0,
             gl.RGBA,
-            this.textureWidth,
-            this.textureHeight,
+            this.dyeTextureWidth,
+            this.dyeTextureHeight,
             0,
             gl.RGBA,
             gl.UNSIGNED_BYTE,
@@ -647,8 +763,8 @@ class App {
             gl.TEXTURE_2D,
             0,
             gl.RG16F,
-            this.textureWidth,
-            this.textureHeight,
+            this.simTextureWidth,
+            this.simTextureHeight,
             0,
             gl.RG,
             gl.HALF_FLOAT,
@@ -681,16 +797,37 @@ class App {
         return vao;
     }
 
-    createFramebuffer() {
+    createDyeFrameBuffer() {
         const gl = this.gl;
 
         const u_dyeTexture = this.createdyeTexture();
+
+        const frameBuffer = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuffer);
+
+        gl.framebufferTexture2D(
+            gl.FRAMEBUFFER,
+            gl.COLOR_ATTACHMENT0,
+            gl.TEXTURE_2D,
+            u_dyeTexture,
+            0,
+        );
+
+        return {
+            frameBuffer,
+            texture: {
+                u_dyeTexture,
+            },
+        };
+    }
+    createSimulationFrameBuffer() {
+        const gl = this.gl;
+
         const u_velocityTexture = this.createSignedFloatTexture();
         const u_divergenceTexture = this.createSignedFloatTexture();
         const u_pressureTexture = this.createSignedFloatTexture();
 
         const textureList = [
-            u_dyeTexture,
             u_velocityTexture,
             u_divergenceTexture,
             u_pressureTexture,
@@ -712,7 +849,6 @@ class App {
         return {
             frameBuffer,
             texture: {
-                u_dyeTexture,
                 u_velocityTexture,
                 u_divergenceTexture,
                 u_pressureTexture,
