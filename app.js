@@ -214,11 +214,19 @@ class App {
 
             void main() {
                 ivec2 coord = ivec2(gl_FragCoord.xy);
+                ivec2 size = textureSize(u_velocityTexture, 0);
 
-                float L = texelFetch(u_velocityTexture, coord + ivec2(-1, 0),0).x;
-                float R = texelFetch(u_velocityTexture, coord + ivec2(1, 0),0).x;
-                float T = texelFetch(u_velocityTexture, coord + ivec2(0, 1),0).y;
-                float B = texelFetch(u_velocityTexture, coord + ivec2(0, -1),0).y;
+                
+                ivec2 Lc = clamp(coord + ivec2(-1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Rc = clamp(coord + ivec2(1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Tc = clamp(coord + ivec2(0, 1), ivec2(0), size - ivec2(1));
+                ivec2 Bc = clamp(coord + ivec2(0, -1), ivec2(0), size - ivec2(1));
+
+                vec2 C = texelFetch(u_velocityTexture,coord,0).xy;
+                float L = (coord.x == 0)            ? -C.x : texelFetch(u_velocityTexture, coord + ivec2(-1,0), 0).x;
+                float R = (coord.x == size.x - 1)   ? -C.x : texelFetch(u_velocityTexture, coord + ivec2( 1,0), 0).x;
+                float T = (coord.y == size.y - 1)   ? -C.y : texelFetch(u_velocityTexture, coord + ivec2( 0,1), 0).y;
+                float B = (coord.y == 0)            ? -C.y : texelFetch(u_velocityTexture, coord + ivec2( 0,-1), 0).y;
 
                 float divergence = 0.5 * ((R - L) + (T - B));
 
@@ -257,13 +265,19 @@ class App {
 
             void main() {
                 ivec2 coord = ivec2(gl_FragCoord.xy);
+                ivec2 size = textureSize(u_pressureTexture, 0);
 
                 float divergence = texelFetch(u_divergenceTexture, coord, 0).r;
 
-                float L = texelFetch(u_pressureTexture, coord + ivec2(-1, 0),0).x;
-                float R = texelFetch(u_pressureTexture, coord + ivec2(1, 0),0).x;
-                float T = texelFetch(u_pressureTexture, coord + ivec2(0, -1),0).x;
-                float B = texelFetch(u_pressureTexture, coord + ivec2(0, 1),0).x;
+                ivec2 Lc = clamp(coord + ivec2(-1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Rc = clamp(coord + ivec2(1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Tc = clamp(coord + ivec2(0, 1), ivec2(0), size - ivec2(1));
+                ivec2 Bc = clamp(coord + ivec2(0, -1), ivec2(0), size - ivec2(1));
+
+                float L = texelFetch(u_pressureTexture, Lc,0).x;
+                float R = texelFetch(u_pressureTexture, Rc,0).x;
+                float T = texelFetch(u_pressureTexture, Tc,0).x;
+                float B = texelFetch(u_pressureTexture, Bc,0).x;
 
                 float pressure = (L + R + T + B - divergence) * 0.25;
 
@@ -349,7 +363,7 @@ class App {
                 vec2 prevCoord = coord - currentVelocity * u_dt;
 
                 vec3 velocity = texture(u_velocityTexture, prevCoord).rgb;
-                velocity *=0.96;
+                velocity *=0.999;
                 outVelocity = vec4(velocity, 0.);
             }
             `;
@@ -383,7 +397,7 @@ class App {
         const b = Math.random() * (max - min) + min;
 
         // return [r, g, b];
-        return [0.07, 0.07, 0.07];
+        return [0.08, 0.04, 0.1];
     }
 
     animate() {
@@ -424,7 +438,7 @@ class App {
                 {
                     key: "vec2",
                     name: "u_mouseVelocity",
-                    value: [this.mouseDelta.x * 90, this.mouseDelta.y * 90],
+                    value: [this.mouseDelta.x * 100, this.mouseDelta.y * 100],
                 },
             ],
             this.simReadBuffer,
@@ -501,7 +515,7 @@ class App {
     initWebgl() {
         const gl = this.gl;
         const vs = gl.createShader(gl.VERTEX_SHADER);
-        this.penSize = 0.1;
+        this.penSize = 0.05;
         this.simTextureWidth = SIMRES;
         this.simTextureHeight = Math.floor(
             SIMRES * (this.canvas.height / this.canvas.width),
