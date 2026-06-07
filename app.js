@@ -4,7 +4,7 @@ import { Uniform } from "./uniform.js";
 import { UniformManager } from "./uniformManager.js";
 import { uniformSchema } from "./uniformSchema.js";
 
-const DYERES = 2048;
+const DYERES = 1024;
 const SIMRES = 128;
 
 class App {
@@ -182,27 +182,6 @@ class App {
             `;
     }
 
-    velocityDisplayShaderSource() {
-        return /*glsl*/ `#version 300 es
-        precision highp float;
-
-        uniform vec2 u_resolution;
-        uniform sampler2D u_velocityTexture;
-
-        layout(location=0) out vec4 outColor;
-
-        void main() {
-            vec2 coord = gl_FragCoord.xy / u_resolution.xy;
-
-            vec2 v = texture(u_velocityTexture, coord).xy;
-
-            vec3 color = vec3(v * 0.5 + 0.5, 0.0);
-
-            outColor = vec4(color, 1.0);
-        }
-    `;
-    }
-
     divergenceShaderSource() {
         return /*glsl*/ `#version 300 es
             precision highp float;
@@ -339,9 +318,10 @@ class App {
                 vec2 prevCoord = coord - currentVelocity * u_dt;
 
                 vec3 dye = texture(u_dyeTexture, prevCoord).rgb;
+                float decay = 1.0 + 1. * u_dt;
 
-                // dye -= 0.0018;
-                outDye = vec4(dye, 1.);
+                
+                outDye = vec4(dye/decay, 1.);
             }
             `;
     }
@@ -363,8 +343,9 @@ class App {
                 vec2 prevCoord = coord - currentVelocity * u_dt;
 
                 vec3 velocity = texture(u_velocityTexture, prevCoord).rgb;
-                velocity *=0.999;
-                outVelocity = vec4(velocity, 0.);
+                float decay = 1.0 + 0.01 * u_dt;
+                // velocity *=0.999;
+                outVelocity = vec4(velocity / decay, 0.);
             }
             `;
     }
@@ -388,6 +369,78 @@ class App {
             `;
     }
 
+    vorticityShaderSource() {
+        return /*glsl*/ `#version 300 es
+            precision highp float;
+
+            uniform sampler2D u_velocityTexture;
+
+            layout(location=3) out vec4 outVorticity;
+
+            void main() {
+                ivec2 texelCoord = ivec2(gl_FragCoord.xy);
+                ivec2 size = textureSize(u_velocityTexture, 0);
+
+                ivec2 Lc = clamp(texelCoord + ivec2(-1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Rc = clamp(texelCoord + ivec2(1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Tc = clamp(texelCoord + ivec2(0, 1), ivec2(0), size - ivec2(1));
+                ivec2 Bc = clamp(texelCoord + ivec2(0, -1), ivec2(0), size - ivec2(1));
+
+                float L = texelFetch(u_velocityTexture, Lc,0).x;
+                float R = texelFetch(u_velocityTexture, Rc,0).x;
+                float T = texelFetch(u_velocityTexture, Tc,0).x;
+                float B = texelFetch(u_velocityTexture, Bc,0).x;
+
+                float vorticity = 0.5 * ((R - L) - (T - B));
+
+                outVorticity = vec4(vorticity, 0., 0., 1.);
+            }
+            `;
+    }
+
+    vorticityForceShaderSource() {
+        return /*glsl*/ `#version 300 es
+            precision highp float;
+
+            uniform sampler2D u_velocityTexture;
+            uniform sampler2D u_vorticityTexture;
+            uniform float u_dt;
+
+            layout(location=0) out vec4 outVelocity;
+
+            void main() {
+                ivec2 texelCoord = ivec2(gl_FragCoord.xy);
+                ivec2 size = textureSize(u_vorticityTexture, 0);
+
+                ivec2 Lc = clamp(texelCoord + ivec2(-1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Rc = clamp(texelCoord + ivec2(1, 0), ivec2(0), size - ivec2(1));
+                ivec2 Tc = clamp(texelCoord + ivec2(0, 1), ivec2(0), size - ivec2(1));
+                ivec2 Bc = clamp(texelCoord + ivec2(0, -1), ivec2(0), size - ivec2(1));
+
+                float C = texelFetch(u_vorticityTexture, texelCoord, 0).x;
+                float L = abs(texelFetch(u_vorticityTexture, Lc,0).x);
+                float R = abs(texelFetch(u_vorticityTexture, Rc,0).x);
+                float T = abs(texelFetch(u_vorticityTexture, Tc,0).x);
+                float B = abs(texelFetch(u_vorticityTexture, Bc,0).x);
+
+                vec2 force = vec2(T - B, L - R);
+
+                float len = length(force);
+                if(len > 0.0001){
+                    force /= len;
+                }else{
+                    force = vec2(0.);
+                }
+                force *= C * 30.;
+
+                vec2 velocity = texelFetch(u_velocityTexture, texelCoord, 0).xy;
+                velocity += force * u_dt;
+
+                outVelocity = vec4(velocity, 0., 1);
+            }
+            `;
+    }
+
     randomColor() {
         const max = 0.08;
         const min = 0;
@@ -397,7 +450,7 @@ class App {
         const b = Math.random() * (max - min) + min;
 
         // return [r, g, b];
-        return [0.08, 0.04, 0.1];
+        return [0.4, 0.02, 0.02];
     }
 
     animate() {
@@ -438,7 +491,7 @@ class App {
                 {
                     key: "vec2",
                     name: "u_mouseVelocity",
-                    value: [this.mouseDelta.x * 100, this.mouseDelta.y * 100],
+                    value: [this.mouseDelta.x * 60, this.mouseDelta.y * 60],
                 },
             ],
             this.simReadBuffer,
@@ -448,6 +501,22 @@ class App {
         );
 
         this.velocityAdvectionPass.pass(
+            [{ key: "float", name: "u_dt", value: dt }],
+            this.simReadBuffer,
+            this.simWriteBuffer,
+            this.simTextureWidth,
+            this.simTextureHeight,
+        );
+
+        this.vorticityPass.pass(
+            [],
+            this.simReadBuffer,
+            this.simWriteBuffer,
+            this.simTextureWidth,
+            this.simTextureHeight,
+        );
+
+        this.vorticityForcePass.pass(
             [{ key: "float", name: "u_dt", value: dt }],
             this.simReadBuffer,
             this.simWriteBuffer,
@@ -471,7 +540,7 @@ class App {
             this.simTextureHeight,
         );
 
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 50; i++) {
             this.pressurePass.pass(
                 [],
                 this.simReadBuffer,
@@ -515,7 +584,7 @@ class App {
     initWebgl() {
         const gl = this.gl;
         const vs = gl.createShader(gl.VERTEX_SHADER);
-        this.penSize = 0.05;
+        this.penSize = 0.2;
         this.simTextureWidth = SIMRES;
         this.simTextureHeight = Math.floor(
             SIMRES * (this.canvas.height / this.canvas.width),
@@ -535,6 +604,7 @@ class App {
             u_velocityTexture: gl.COLOR_ATTACHMENT0,
             u_divergenceTexture: gl.COLOR_ATTACHMENT1,
             u_pressureTexture: gl.COLOR_ATTACHMENT2,
+            u_vorticityTexture: gl.COLOR_ATTACHMENT3,
         };
 
         const resolution = {
@@ -644,6 +714,28 @@ class App {
             ["u_velocityTexture", "u_pressureTexture"],
         );
 
+        this.vorticityPass = new ShaderPass(
+            gl,
+            this.quadVao,
+            false,
+            this.vertexShader(),
+            this.vorticityShaderSource(),
+            this.relationSimTexture,
+            [],
+            ["u_velocityTexture"],
+            ["u_vorticityTexture"],
+        );
+        this.vorticityForcePass = new ShaderPass(
+            gl,
+            this.quadVao,
+            false,
+            this.vertexShader(),
+            this.vorticityForceShaderSource(),
+            this.relationSimTexture,
+            [{ key: "float", name: "u_dt", value: 0 }],
+            ["u_velocityTexture", "u_vorticityTexture"],
+            ["u_velocityTexture"],
+        );
         this.dyeSplatPass = new ShaderPass(
             gl,
             this.quadVao,
@@ -840,11 +932,13 @@ class App {
         const u_velocityTexture = this.createSignedFloatTexture();
         const u_divergenceTexture = this.createSignedFloatTexture();
         const u_pressureTexture = this.createSignedFloatTexture();
+        const u_vorticityTexture = this.createSignedFloatTexture();
 
         const textureList = [
             u_velocityTexture,
             u_divergenceTexture,
             u_pressureTexture,
+            u_vorticityTexture,
         ];
 
         const frameBuffer = gl.createFramebuffer();
@@ -866,6 +960,7 @@ class App {
                 u_velocityTexture,
                 u_divergenceTexture,
                 u_pressureTexture,
+                u_vorticityTexture,
             },
         };
     }
